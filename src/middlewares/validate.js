@@ -1,16 +1,30 @@
 
 export const validate = (schema) => (req, res, next) => {
-  const result = schema.safeParse({
-    body: req.body,
-    params: req.params,
-    query: req.query,
-  });
+  const input = {};
+
+  // Only validate sections defined in the schema
+  if (schema.shape.body) {
+    input.body = req.body;
+  }
+
+  if (schema.shape.params) {
+    input.params = req.params;
+  }
+
+  if (schema.shape.query) {
+    input.query = req.query;
+  }
+
+  const result = schema.safeParse(input);
 
   if (!result.success) {
     return res.status(400).json({
       success: false,
       message: "Validation failed",
-      errors: result.error.flatten().fieldErrors,
+      errors: {
+        ...result.error.flatten().fieldErrors,
+        formErrors: result.error.flatten().formErrors,
+      },
     });
   }
 

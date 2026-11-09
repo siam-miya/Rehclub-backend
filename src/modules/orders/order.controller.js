@@ -3,6 +3,9 @@ import {
   createOrder as createOrderService,
   getOrderByNumber,
   getAllOrders as getAllOrdersService,
+  cancelOrder as cancelOrderService,
+  deliverOrder as deliverOrderService,
+  updateOrderStatus as updateOrderStatusService,
 } from "./order.service.js";
 
 // Create Order
@@ -70,12 +73,69 @@ export const trackOrder = async (req, res, next) => {
 // Get All Orders (Admin)
 export const getAllOrders = async (req, res, next) => {
   try {
-    const result = await getAllOrdersService(req.query);
+    const query = res.locals.validatedQuery ?? req.query;
+
+    const result = await getAllOrdersService(query);
 
     return res.status(200).json({
       success: true,
       message: "Orders retrieved successfully.",
       data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Cancel Order (Admin)
+export const cancelOrder = async (req, res, next) => {
+  try {
+    const order = await cancelOrderService({
+      orderId: req.params.orderId,
+      note: req.body.note,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Order cancelled successfully.",
+      data: { order },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Deliver Order (Admin)
+export const deliverOrder = async (req, res, next) => {
+  try {
+    const order = await deliverOrderService({
+      orderId: req.params.orderId,
+      note: req.body.note,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Order delivered successfully.",
+      data: { order },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update Order Status (Admin)
+export const updateOrderStatus = async (req, res, next) => {
+  try {
+    const order = await updateOrderStatusService({
+      orderId: req.params.orderId,
+      status: req.body.status,
+      note: req.body.note,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Order status updated successfully.",
+      data: { order },
     });
   } catch (error) {
     next(error);

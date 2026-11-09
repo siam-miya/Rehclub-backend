@@ -6,7 +6,11 @@ import Order from "./order.model.js";
 import Product from "../products/product.model.js";
 import Inventory from "../inventory/inventory.model.js";
 
-import { reserveInventory } from "../inventory/inventory.service.js";
+import {
+  reserveInventory,
+  releaseInventory,
+  commitInventory,
+} from "../inventory/inventory.service.js";
 
 // Generate Unique Order Number (Bangladesh Time)
 const generateOrderNumber = () => {
@@ -69,10 +73,13 @@ const mergeOrderItems = (items) => {
       throw createError("Invalid product quantity. Maximum is 99.", 400);
     }
 
-    const existing = itemMap.get(inventoryId);
+    const inventoryKey = String(inventoryId);
+    const productKey = String(productId);
+
+    const existing = itemMap.get(inventoryKey);
 
     if (existing) {
-      if (existing.productId !== productId) {
+      if (String(existing.productId) !== productKey) {
         throw createError(
           "Invalid product and inventory combination.",
           400
@@ -88,7 +95,7 @@ const mergeOrderItems = (items) => {
         );
       }
     } else {
-      itemMap.set(inventoryId, {
+      itemMap.set(inventoryKey, {
         productId,
         inventoryId,
         quantity,
@@ -212,13 +219,9 @@ const createOrderAttempt = async (payload, customerId, orderNumber) => {
       // COD Order Data
       const orderData = {
         orderNumber,
-
         customer: customerId,
-
         customerInfo,
-
         items: orderItems,
-
         shippingAddress,
 
         pricing: {
@@ -236,7 +239,6 @@ const createOrderAttempt = async (payload, customerId, orderNumber) => {
 
         status: "PENDING",
 
-        // COD orders do not expire automatically
         reservationStatus: "ACTIVE",
         reservationExpiresAt: null,
 
@@ -289,7 +291,6 @@ export const createOrder = async (payload, customerId = null) => {
 
   const mergedItems = mergeOrderItems(payload.items);
 
-  // Keep Original Payload Unchanged
   const orderPayload = {
     ...payload,
     mergedItems,
@@ -314,10 +315,7 @@ export const createOrder = async (payload, customerId = null) => {
           error?.keyValue?.orderNumber !== undefined
         );
 
-      if (
-        !isDuplicateOrderNumber ||
-        attempt === MAX_ATTEMPTS
-      ) {
+      if (!isDuplicateOrderNumber || attempt === MAX_ATTEMPTS) {
         throw error;
       }
     }
@@ -370,12 +368,10 @@ export const getAllOrders = async (query = {}) => {
 
   const filter = {};
 
-  // Filter By Status
   if (query.status) {
     filter.status = query.status;
   }
 
-  // Search Orders
   if (query.search) {
     const search = query.search
       .trim()
@@ -426,4 +422,244 @@ export const getAllOrders = async (query = {}) => {
       hasPreviousPage: page > 1,
     },
   };
+};
+
+// Release All Reserved Inventory For An Order
+const releaseOrderInventory = async (order, session) => {
+  for (const item of order.items) {
+    await releaseInventory({
+      inventoryId: item.inventory,
+      quantity: item.quantity,
+      session,
+    });
+  }
+};
+
+// Commit All Reserved Inventory For An Order
+const commitOrderInventory = async (order, session) => {
+  for (const item of order.items) {
+    await commitInventory({
+      inventoryId: item.inventory,
+      quantity: item.quantity,
+      session,
+    });
+  }
+};
+
+// Cancel Order (Admin)
+export const cancelOrder = async ({
+  orderId,
+  note = "Order cancelled",
+}) => {
+  validateObjectId(orderId, "Order ID");
+
+  const session = await mongoose.startSession();
+
+  try {
+    let cancelledOrder;
+
+    await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+
+      if (!order) {
+        throw createError("Order not found.", 404);
+      }
+
+      if (!["PENDING", "CONFIRMED"].includes(order.status)) {
+        throw createError(
+          `Cannot cancel an order with ${order.status} status.`,
+          409
+        );
+      }
+
+      if (order.payment.status === "PAID") {
+        throw createError(
+          "This order is already paid and cannot be cancelled.",
+          409
+        );
+      }
+
+      if (order.reservationStatus !== "ACTIVE") {
+        throw createError(
+          "Order inventory reservation is not active.",
+          409
+        );
+      }
+
+      await releaseOrderInventory(order, session);
+
+      const now = new Date();
+
+      order.status = "CANCELLED";
+      order.reservationStatus = "RELEASED";
+      order.reservationExpiresAt = null;
+      order.cancelledAt = now;
+
+      order.statusHistory.push({
+        status: "CANCELLED",
+        note: String(note).slice(0, 500),
+        changedAt: now,
+      });
+
+      await order.save({ session });
+
+      cancelledOrder = order;
+    });
+
+    return cancelledOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+// Deliver Order (Admin)
+export const deliverOrder = async ({
+  orderId,
+  note = "Order delivered",
+}) => {
+  validateObjectId(orderId, "Order ID");
+
+  const session = await mongoose.startSession();
+
+  try {
+    let deliveredOrder;
+
+    await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+
+      if (!order) {
+        throw createError("Order not found.", 404);
+      }
+
+      if (order.status !== "SHIPPED") {
+        throw createError(
+          "Only shipped orders can be marked as delivered.",
+          409
+        );
+      }
+
+      if (order.payment.method !== "COD") {
+        throw createError("Unsupported payment method.", 409);
+      }
+
+      if (order.reservationStatus !== "ACTIVE") {
+        throw createError(
+          "Order inventory reservation is not active.",
+          409
+        );
+      }
+
+      if (order.payment.status === "PAID") {
+        throw createError(
+          "Order payment has already been completed.",
+          409
+        );
+      }
+
+      await commitOrderInventory(order, session);
+
+      const now = new Date();
+
+      order.status = "DELIVERED";
+      order.reservationStatus = "COMMITTED";
+      order.reservationExpiresAt = null;
+      order.deliveredAt = now;
+
+      order.payment.status = "PAID";
+      order.payment.paidAt = now;
+
+      order.statusHistory.push({
+        status: "DELIVERED",
+        note: String(note).slice(0, 500),
+        changedAt: now,
+      });
+
+      await order.save({ session });
+
+      deliveredOrder = order;
+    });
+
+    return deliveredOrder;
+  } finally {
+    await session.endSession();
+  }
+};
+
+// Allowed Order Status Transitions
+const ORDER_STATUS_TRANSITIONS = {
+  PENDING: "CONFIRMED",
+  CONFIRMED: "PROCESSING",
+  PROCESSING: "SHIPPED",
+};
+
+// Update Order Status (Admin)
+export const updateOrderStatus = async ({
+  orderId,
+  status,
+  note = "",
+}) => {
+  validateObjectId(orderId, "Order ID");
+
+  const session = await mongoose.startSession();
+
+  try {
+    let updatedOrder;
+
+    await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+
+      if (!order) {
+        throw createError("Order not found.", 404);
+      }
+
+      const expectedNextStatus =
+        ORDER_STATUS_TRANSITIONS[order.status];
+
+      if (!expectedNextStatus) {
+        throw createError(
+          `Cannot update an order with ${order.status} status.`,
+          409
+        );
+      }
+
+      if (status !== expectedNextStatus) {
+        throw createError(
+          `Invalid status transition. Next status must be ${expectedNextStatus}.`,
+          409
+        );
+      }
+
+      if (order.payment.status === "PAID") {
+        throw createError(
+          "Cannot update an already paid order.",
+          409
+        );
+      }
+
+      if (order.reservationStatus !== "ACTIVE") {
+        throw createError(
+          "Order inventory reservation is not active.",
+          409
+        );
+      }
+
+      const now = new Date();
+
+      order.status = status;
+
+      order.statusHistory.push({
+        status,
+        note: String(note).slice(0, 500),
+        changedAt: now,
+      });
+
+      await order.save({ session });
+
+      updatedOrder = order;
+    });
+
+    return updatedOrder;
+  } finally {
+    await session.endSession();
+  }
 };

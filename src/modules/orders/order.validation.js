@@ -9,7 +9,7 @@ const phoneSchema = z
   .string()
   .trim()
   .regex(
-    /^(?:\+8801|8801|01)[3-9]\d{8}$/,
+    /^(?:\+?8801|01)[3-9]\d{8}$/,
     "Invalid Bangladesh phone number"
   );
 
@@ -100,6 +100,23 @@ export const orderIdSchema = z
   })
   .strict();
 
+// Order Action Validation (Cancel / Deliver)
+export const orderActionSchema = z
+  .object({
+    params: z
+      .object({
+        orderId: objectIdSchema,
+      })
+      .strict(),
+
+    body: z
+      .object({
+        note: z.string().trim().max(500).optional().default(""),
+      })
+      .strict(),
+  })
+  .strict();
+
 // Order List Query Validation
 export const orderListQuerySchema = z
   .object({
@@ -122,6 +139,29 @@ export const orderListQuerySchema = z
           .optional(),
 
         search: z.string().trim().max(100).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+// Order Status Update Validation (Admin)
+export const orderStatusUpdateSchema = z
+  .object({
+    params: z
+      .object({
+        orderId: objectIdSchema,
+      })
+      .strict(),
+
+    body: z
+      .object({
+        status: z.enum([
+          "CONFIRMED",
+          "PROCESSING",
+          "SHIPPED",
+        ]),
+
+        note: z.string().trim().max(500).optional().default(""),
       })
       .strict(),
   })

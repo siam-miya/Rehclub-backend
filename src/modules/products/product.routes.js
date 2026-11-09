@@ -15,6 +15,8 @@ import {
 } from "./product.validation.js";
 
 import { validate } from "../../middlewares/validate.js";
+import { authenticate } from "../../middlewares/auth.middleware.js";
+import { requireAdmin } from "../../middlewares/authorize.middleware.js";
 
 const router = Router();
 
@@ -22,10 +24,28 @@ const router = Router();
 router.get("/", getProducts);
 router.get("/:slug", getProduct);
 
-// Admin routes
-// Authentication will be added before production deployment.
-router.post("/", validate(createProductSchema), postProduct);
-router.patch("/:id", validate(updateProductSchema), patchProduct);
-router.delete("/:id", removeProduct);
+// Admin protected routes
+router.post(
+  "/",
+  authenticate,
+  requireAdmin,
+  validate(createProductSchema),
+  postProduct
+);
+
+router.patch(
+  "/:id",
+  authenticate,
+  requireAdmin,
+  validate(updateProductSchema),
+  patchProduct
+);
+
+router.delete(
+  "/:id",
+  authenticate,
+  requireAdmin,
+  removeProduct
+);
 
 export default router;

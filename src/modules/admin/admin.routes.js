@@ -1,16 +1,27 @@
+
 import { Router } from "express";
 
-import {
-  authenticate,
-} from "../../middlewares/auth.middleware.js";
+import { authenticate } from "../../middlewares/auth.middleware.js";
+import { requireAdmin } from "../../middlewares/authorize.middleware.js";
+import { validate } from "../../middlewares/validate.js";
 
 import {
-  requireAdmin,
-} from "../../middlewares/authorize.middleware.js";
+  getAllOrders,
+  cancelOrder,
+  deliverOrder,
+  updateOrderStatus,
+} from "../orders/order.controller.js";
+
+import {
+  orderListQuerySchema,
+  orderActionSchema,
+  orderStatusUpdateSchema,
+} from "../orders/order.validation.js";
+import { commitInventory } from "../inventory/inventory.service.js";
 
 const router = Router();
 
-// Admin dashboard
+// Admin Dashboard
 router.get(
   "/dashboard",
   authenticate,
@@ -24,7 +35,7 @@ router.get(
   }
 );
 
-// Admin profile test
+// Admin Profile
 router.get(
   "/me",
   authenticate,
@@ -37,4 +48,49 @@ router.get(
   }
 );
 
+// Get All Orders
+router.get(
+  "/orders",
+  authenticate,
+  requireAdmin,
+  validate(orderListQuerySchema),
+  getAllOrders
+);
+
+// Cancel Order
+router.patch(
+  "/orders/:orderId/cancel",
+  authenticate,
+  requireAdmin,
+  validate(orderActionSchema),
+  cancelOrder
+);
+
+// Deliver Order
+router.patch(
+  "/orders/:orderId/deliver",
+  authenticate,
+  requireAdmin,
+  validate(orderActionSchema),
+  deliverOrder
+);
+
+// Update Order Status
+router.patch(
+  "/orders/:orderId/status",
+  authenticate,
+  requireAdmin,
+  validate(orderStatusUpdateSchema),
+  updateOrderStatus
+);
+
 export default router;
+
+
+
+
+
+
+
+
+
